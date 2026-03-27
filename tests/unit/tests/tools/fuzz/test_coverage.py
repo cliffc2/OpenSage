@@ -47,7 +47,9 @@ def container_and_target():
         container.remove(force=True)
 
 
+@pytest.mark.integration
 def test_compile_coverage(container_and_target):
+    """Integration test requiring Docker and OSS-Fuzz image."""
     container, fuzz_target = container_and_target
 
     # create a tmp file, run the fuzz_target, check whether output the default.profraw

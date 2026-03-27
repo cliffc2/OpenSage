@@ -1,0 +1,6 @@
+# Sandbox configuration - minimal setup
+# Sandboxes are lazy-loaded only when tools need them
+[sandbox]
+backend = "native"
+
+[model]
