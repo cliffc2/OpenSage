@@ -2,5 +2,7 @@
 # Sandboxes are lazy-loaded only when tools need them
 [sandbox]
 backend = "native"
+# Use docker network instead of loopback binding to avoid macOS issues
+network = "bridge"
 
 [model]

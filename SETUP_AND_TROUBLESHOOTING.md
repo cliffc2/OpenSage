@@ -42,6 +42,22 @@ Checking Docker...
   ✓ Docker daemon is running and accessible
 ```
 
+### 4. Install opensage CLI globally
+
+```bash
+cd /path/to/opensage
+uv pip install -e .
+
+# Add to PATH in ~/.zshrc or ~/.bashrc
+export PATH="/path/to/opensage/.venv/bin:$PATH"
+```
+
+Then you can use `opensage` directly from anywhere:
+```bash
+opensage dependency-check
+opensage web --agent examples/agents/my_ollama_agent --port 8000
+```
+
 ## Running OpenSage Web UI
 
 ### Quick Start
@@ -53,10 +69,64 @@ Checking Docker...
 Or manually:
 
 ```bash
-uv run opensage web --agent examples/agents/my_ollama_agent --port 8000
+opensage web --agent examples/agents/my_ollama_agent --port 8000
 ```
 
 Access at: **http://localhost:8000**
+
+## Docker Images and Containers
+
+### Current State
+
+Check what Docker images and containers you have:
+
+```bash
+docker images
+docker ps -a
+```
+
+### Available OpenSage Images
+
+OpenSage has several pre-built Dockerfiles for different sandbox backends:
+
+1. **main** - Primary execution sandbox (Ubuntu-based)
+   ```bash
+   docker build -f src/opensage/templates/dockerfiles/main/Dockerfile -t opensage/main:latest .
+   ```
+
+2. **neo4j** - Graph database for memory/tracing
+   ```bash
+   docker build -f src/opensage/templates/dockerfiles/neo4j/Dockerfile -t opensage/neo4j:latest .
+   ```
+
+3. **joern** - Static analysis framework
+4. **codeql** - CodeQL static analysis
+5. **coverage** - Coverage instrumentation
+6. **gdb_mcp** - GDB debugger via MCP
+7. **pdb_mcp** - Python debugger via MCP
+
+### Build Custom Images
+
+Build all sandbox images:
+```bash
+cd /path/to/opensage
+for dockerfile in src/opensage/templates/dockerfiles/*/Dockerfile; do
+  name=$(basename $(dirname $dockerfile))
+  docker build -f $dockerfile -t opensage/$name:latest .
+done
+```
+
+Build a specific image:
+```bash
+docker build -f src/opensage/templates/dockerfiles/main/Dockerfile -t opensage/main:latest .
+```
+
+### Clean Up Docker
+
+Remove all stopped containers and unused images:
+```bash
+docker system prune -a --volumes -f
+```
 
 ## Common Errors and Fixes
 
@@ -102,7 +172,10 @@ image = "ubuntu:24.04"
 [model]
 ```
 
-Then `docker pull ubuntu:24.04` to ensure the image exists.
+Then ensure the image exists:
+```bash
+docker pull ubuntu:24.04
+```
 
 ---
 
@@ -133,7 +206,7 @@ image = "ubuntu:24.04"
 
 ---
 
-### Error 3: Docker IP Allocation Timeout - Docker Network Issue
+### Error 3: Docker IP Allocation Timeout - Docker Network Issue (macOS)
 
 **Symptom:**
 ```
@@ -144,35 +217,34 @@ INFO:opensage.sandbox.native_docker_sandbox:Retrying IP allocation, attempt 25
 
 Web UI hangs, then times out.
 
-**Cause:** Docker Desktop network exhaustion or resource constraints (macOS issue).
+**Cause:** OpenSage tries to reserve loopback IPs (127.0.0.x) for port binding on macOS Docker Desktop, which doesn't work reliably due to Docker Desktop's virtualized network isolation.
+
+**Root Issue:** OpenSage's sandbox IP allocation was designed for Linux Docker (where loopback binding works), not macOS Docker Desktop.
 
 **Fix:**
 
-1. **Clean up Docker resources:**
-   ```bash
-   docker system prune -a --volumes -f
-   ```
+**Quick fix (recommended):** Use agents with `tools=[]` to avoid sandbox initialization:
+```python
+def mk_agent(opensage_session_id: str):
+    return OpenSageAgent(
+        name="my_agent",
+        model=LiteLlm(...),
+        tools=[],  # No tools = no port binding needed
+    )
+```
 
-2. **Reduce sandboxes** in `config.toml` - only define what you need:
-   ```toml
-   [sandbox]
-   backend = "native"
-   
-   [sandbox.sandboxes.main]
-   image = "ubuntu:24.04"
-   
-   # Don't define unused sandboxes like joern, codeql, neo4j unless needed
-   ```
+**Alternative:** Configure sandboxes to use Docker network instead of loopback binding:
+```toml
+[sandbox]
+backend = "native"
+network = "bridge"  # Use Docker bridge network instead of loopback
+```
 
-3. **Or remove bash tool entirely** to avoid sandbox initialization:
-   ```python
-   tools=[]  # Agent with no tools needs no sandboxes
-   ```
-
-4. **Restart Docker Desktop** (macOS):
-   - Quit Docker completely
-   - Reopen it
-   - Wait for the engine to fully start
+**Nuclear option:** Restart Docker Desktop
+- Quit Docker completely
+- Reopen it
+- Wait for the engine to fully start
+- Retry
 
 ---
 
@@ -183,7 +255,7 @@ Web UI hangs, then times out.
 Error response from daemon: pull access denied for opensage/main, repository does not exist
 ```
 
-**Cause:** Custom image like `opensage/main:latest` doesn't exist on Docker Hub.
+**Cause:** Custom image like `opensage/main:latest` doesn't exist on Docker Hub or locally.
 
 **Fix:**
 
@@ -194,13 +266,13 @@ image = "ubuntu:24.04"  # ✓ Use standard images
 # image = "opensage/main:latest"  # ✗ Doesn't exist
 ```
 
-**If you need the custom image**, build it:
+**If you need the custom image**, build it locally:
 ```bash
 cd /path/to/opensage
 docker build -f src/opensage/templates/dockerfiles/main/Dockerfile -t opensage/main:latest .
 ```
 
-Note: This takes 5+ minutes as it builds a large base image.
+Note: This takes 5-10 minutes as it builds a large base image.
 
 ---
 
@@ -274,7 +346,7 @@ backend = "native"
 
 **Run it:**
 ```bash
-uv run opensage web --agent my_agent --port 8000
+opensage web --agent my_agent --port 8000
 ```
 
 ---
@@ -299,6 +371,7 @@ def mk_agent(opensage_session_id: str):
 ```toml
 [sandbox]
 backend = "native"
+network = "bridge"  # Recommended for macOS
 
 [sandbox.sandboxes.main]
 image = "ubuntu:24.04"
@@ -318,7 +391,7 @@ docker pull ubuntu:24.04
 ### Resume a Session
 
 ```bash
-uv run opensage web --resume
+opensage web --resume
 ```
 
 Restores the latest saved session snapshot.
@@ -326,7 +399,7 @@ Restores the latest saved session snapshot.
 ### Resume Specific Session
 
 ```bash
-uv run opensage web --resume-from <session_id_or_path>
+opensage web --resume-from <session_id_or_path>
 ```
 
 Sessions are saved under `~/.local/opensage/sessions/`
@@ -380,7 +453,7 @@ If you keep getting IP allocation retries:
 
 ```bash
 cd /path/to/opensage
-uv run opensage web --agent examples/agents/my_ollama_agent --port 8000
+opensage web --agent examples/agents/my_ollama_agent --port 8000
 ```
 
 If it starts and connects to http://localhost:8000, setup is working.
@@ -388,9 +461,26 @@ If it starts and connects to http://localhost:8000, setup is working.
 ### Full Test with Bash Tool
 
 1. Create an agent with `bash_tool_main`
-2. Configure the "main" sandbox
+2. Configure the "main" sandbox with `ubuntu:24.04`
 3. Type in chat: "What is 2+2?" or "ls -la"
 4. Verify bash command executes in the sandbox
+
+---
+
+## Bash Script Helper
+
+A bash script `run_web.sh` is provided to start the Web UI:
+
+```bash
+# Default (my_ollama_agent on port 8000)
+./run_web.sh
+
+# Specific agent
+./run_web.sh examples/agents/poc_agent_dynamic_tools
+
+# Custom port
+./run_web.sh examples/agents/my_ollama_agent 9000
+```
 
 ---
 
